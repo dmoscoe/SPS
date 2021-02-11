@@ -1,0 +1,269 @@
+---
+title: "DATA607 SQL and R"
+author: "Daniel Moscoe"
+date: "2/11/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+Connect to SQL server:
+
+```{r}
+library(tidyverse)
+library(DBI)
+
+con <- dbConnect(odbc::odbc(), .connection_string = "Driver={MySQL ODBC 8.0 Unicode Driver};", 
+                 timeout = 10, Server = "localhost", 
+                 UID = Sys.getenv("userid"), PWD = Sys.getenv("pwd"), port = 3306)
+```
+
+Create a database:
+
+```{r}
+dbGetQuery(con, 'CREATE DATABASE MoviePrefs')
+
+dbGetQuery(con, 'CREATE TABLE movieprefs.person 
+           (person_id SMALLINT UNSIGNED AUTO_INCREMENT,
+           fname VARCHAR(50),
+           lname VARCHAR(50),
+           CONSTRAINT pk_person PRIMARY KEY (person_id))')
+
+dbGetQuery(con, 'CREATE TABLE movieprefs.movie
+           (movie_id SMALLINT UNSIGNED AUTO_INCREMENT,
+           title VARCHAR(100),
+           year SMALLINT,
+           genre VARCHAR(50),
+           gross_millions DOUBLE(6,3),
+           CONSTRAINT pk_movie PRIMARY KEY (movie_id))')
+
+dbGetQuery(con, 'CREATE TABLE movieprefs.ratings
+           (rating_id SMALLINT UNSIGNED AUTO_INCREMENT,
+           person_id SMALLINT UNSIGNED,
+           movie_id SMALLINT UNSIGNED,
+           rating SMALLINT UNSIGNED,
+           CONSTRAINT pk_ratings PRIMARY KEY (rating_id),
+           CONSTRAINT fk_person_id FOREIGN KEY (person_id)
+           REFERENCES person(person_id),
+           CONSTRAINT fk_movie_id FOREIGN KEY (movie_id)
+           REFERENCES movie(movie_id))')
+```
+
+Load data into the database:
+
+```{r}
+dbGetQuery(con, 'INSERT INTO movieprefs.person
+	(person_id, fname, lname)
+	VALUES (null, "Alora", "Kensington")')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.person
+	(person_id, fname, lname)
+	VALUES (null, "Sidney", "Cambria")')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.person
+	(person_id, fname, lname)
+	VALUES (null, "Damaris", "Sofie")')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.person
+	(person_id, fname, lname)
+	VALUES (null, "Kamdyn", "Graeme")')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.person
+	(person_id, fname, lname)
+	VALUES (null, "Carlo", "Reagan")')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.movie
+	(movie_id, title, year, genre, gross_millions)
+	VALUES (null, "Jurassic World", 2015, "Action", 652.27)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.movie
+	(movie_id, title, year, genre, gross_millions)
+	VALUES (null, "Frozen II", 2019, "Animation", 477.37)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.movie
+	(movie_id, title, year, genre, gross_millions)
+	VALUES (null, "Harry Potter and the Deathly Hallows", 2011, "Fantasy", 381.01)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.movie
+	(movie_id, title, year, genre, gross_millions)
+	VALUES (null, "Avengers: Endgame", 2019, "Action", 858.37)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.movie
+	(movie_id, title, year, genre, gross_millions)
+	VALUES (null, "Star Wars: Episode VII- The Force Awakens", 2015, "Action", 936.66)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.movie
+	(movie_id, title, year, genre, gross_millions)
+	VALUES (null, "Incredibles 2", 2018, "Animation", 608.58)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id, rating) 
+	VALUES (null, 1, 1, 4)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id, rating) 
+	VALUES (null, 1, 2, 2)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id) 
+	VALUES (null, 1, 3)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id, rating) 
+	VALUES (null, 1, 4, 2)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id, rating) 
+	VALUES (null, 1, 5, 3)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id, rating) 
+	VALUES (null, 1, 6, 4)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id, rating) 
+	VALUES (null, 2, 1, 3)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id) 
+	VALUES (null, 2, 2)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id, rating) 
+	VALUES (null, 2, 3, 3)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id, rating) 
+	VALUES (null, 2, 4, 2)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id, rating) 
+	VALUES (null, 2, 5, 1)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id) 
+	VALUES (null, 2, 6)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id, rating) 
+	VALUES (null, 3, 1, 2)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id, rating) 
+	VALUES (null, 3, 2, 1)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id, rating) 
+	VALUES (null, 3, 3, 3)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id) 
+	VALUES (null, 3, 4)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id) 
+	VALUES (null, 3, 5)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id, rating) 
+	VALUES (null, 3, 6, 1)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id, rating) 
+	VALUES (null, 4, 1, 2)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id, rating) 
+	VALUES (null, 4, 2, 4)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id, rating) 
+	VALUES (null, 4, 3, 5)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id, rating) 
+	VALUES (null, 4, 4, 5)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id) 
+	VALUES (null, 4, 5)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id, rating) 
+	VALUES (null, 4, 6, 2)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id, rating)
+  VALUES (null, 5, 1, 3)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id, rating) 
+	VALUES (null, 5, 2, 3)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id, rating) 
+	VALUES (null, 5, 3, 2)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id, rating) 
+	VALUES (null, 5, 4, 2)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id, rating) 
+	VALUES (null, 5, 5, 1)')
+
+dbGetQuery(con, 'INSERT INTO movieprefs.ratings 
+	(rating_id, person_id, movie_id) 
+	VALUES (null, 5, 6)')
+```
+
+Create a dataframe in R that shows each person's rating for each movie. Since this information is stored in movieprefs.ratings as key values instead of names and titles, this dataframe will be based on a SELECT query that combines information from all three tables in the database.
+
+```{r}
+ratings <- dbGetQuery(con, 'SELECT person.fname, person.lname, movie.title, ratings.rating
+  FROM movieprefs.person
+  INNER JOIN movieprefs.ratings
+  ON person.person_id = ratings.person_id
+  INNER JOIN movieprefs.movie
+  ON ratings.movie_id = movie.movie_id')
+```
+
+We can visualize the ratings for each person surveyed. Notice that some values are missing.
+
+```{r}
+ggplot(data = ratings, mapping = aes(x = rating, y = title)) +
+  geom_point() +
+  facet_wrap(vars(fname))
+
+```
+
+Because this is a very small dataset, it is risky to impute values for those missing. A better plan might be to take missing values as information about which movies were less likely to be seen among the group sampled. While everyone surveyed provided a rating for Jurassic World, only three people among those surveyed had seen Incredibles 2 or Star Wars.
+
+If we were to impute values, one way to do so would be to replace each missing rating with the median rating for that movie based on responses from other participants. To accomplish this, I added a column to the dataframe called "imputed." Imputed is TRUE when the value in that row is the result of a calculation, rather than a survey result. Then I replaced each NA value with the median rating for that movie. The final visualization shows the survey results along with imputed values, distinguished by color.
+
+```{r}
+#Calculate median ratings for each movie:
+medians <- ratings %>%
+  group_by(title) %>%
+  summarize(meds = round(median(rating, na.rm = TRUE), 0))
+
+#Add a column for imputed:
+ratings["imputed"] <- is.na(ratings$rating)
+
+#Replace missing values (see "questions" section at the end of this document):
+ratings$rating <- replace(ratings$rating, c(3,8,12,16,17,23,30), c(3,2,2,2,1,1,2))
+
+#Visualize the survey results together with the imputed results (see "questions"):
+ggplot(data = ratings, mapping = aes(x = rating, y = title, color = imputed)) +
+  geom_point() +
+  facet_wrap(vars(fname))
+```
+
+### Questions
+
+To replace missing values, I would like R to identify each "NA" in the rating column, and replace it with the median of the ratings for that movie. Instead, what I did was first use R to calculate the medians, and then I replaced the values "by hand," replacing the missing value at each index with the appropriate median. How could I use the replace function to update entries based on a calculation, rather than "by hand"?
+
+In the data visualization, each facet was titled with the first name of the survey participant. How could I concatenate the first and last name of each participant to serve as titles?
