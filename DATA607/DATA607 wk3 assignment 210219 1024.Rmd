@@ -1,0 +1,118 @@
+---
+title: "DATA607 Week 3 Assignment"
+author: "Daniel Moscoe"
+date: "2/15/2021"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(stringr)
+```
+
+*1. Using the 173 majors listed in fivethirtyeight.com's College Majors dataset, provide code that identifies the majors that contain either "DATA" or "STATISTICS".*
+
+Import the dataset into R:
+
+```{r}
+college_majors_csv = "https://raw.githubusercontent.com/fivethirtyeight/data/master/college-majors/majors-list.csv"
+college_majors <- read_csv(url(college_majors_csv))
+```
+
+Filter the data based on a regular expression in the Major column. The grepl function returns a vector of booleans based on whether the entry in Major matches the regular expression. Then filter returns rows from college_majors for which grepl returned True.
+
+```{r}
+ds_majors <- college_majors %>%
+  filter(grepl("DATA|STATISTICS", Major))
+ds_majors$Major
+```
+
+*2. Write code that transforms $\texttt{fruits}$, a vector of 14 character vectors, into a single string beginning $\texttt{c("}$.*
+
+```{r}
+fruits <- c("bell pepper", "bilberry", "blackberry", "blood orange", "blueberry", "cantaloupe", "chili pepper", "cloudberry", "elderberry", "lime", "lychee", "mulberry", "olive", "salal berry")
+
+stem <- "c(" #begin the output string
+for (fruit in fruits) { #add fruits and associated punctuation
+  stem <- str_c(stem, '"', fruit, '", ')
+}
+stem <- str_c(substr(stem, 0, nchar(stem) - 2), ")") #replace final comma with closing parenthesis
+
+print.noquote(stem) #display resulting string with escape characters hidden
+```
+
+
+*3. Describe, in words, what these expressions will match:*
+
+$\texttt{(.)\1\1}$
+This expression matches any string containing a single character occurring three times in a row (for example, eee). Since there are no English words that contain this pattern, the subset of $\texttt{words}$ matching this pattern is empty.
+
+```{r}
+str_subset(words, "(.)\\1\\1")
+```
+
+$\texttt{"(.)(.)\\\2\\\1"}$
+This expression matches any string containing a symmetric sequence of 4 characters (for example, abba).
+
+```{r}
+str_subset(words, "(.)(.)\\2\\1")
+```
+
+$\texttt{(..)\1}$
+This expression matches any string containing a repeated pair of letters (for example, abab).
+
+```{r}
+str_subset(words,"(..)\\1")
+```
+
+$\texttt{"(.).\\\1.\\\1"}$
+This expression matches any string containing a sequence of 5 characters such that the first, third, and fifth character are the same (for example, abaca).
+
+```{r}
+str_subset(words, "(.).\\1.\\1")
+```
+
+$\texttt{"(.)(.)(.).*\\\3\\\2\\\1"}$
+This expression matches any string containing a sequence of any three characters, followed later by that same sequence reversed (for example, abc...cba).
+
+```{r}
+str_subset(words, "(.)(.)(.).*\\3\\2\\1")
+```
+
+*4. Construct regular expressions to match words that:*  
+*Start and end with the same character.*
+
+$\texttt{^(.)}$ Begin the string with any character.  
+$\texttt{.*}$ Follow with any characters.  
+$\texttt{\1\$}$ End the string with a backreference to the character represented by the period enclosed in parentheses.
+
+```{r}
+str_subset(words,"^(.).*\\1$")
+```
+
+*Contain a repeated pair of letters (e.g., "church" contains "ch" repeated twice.)*
+
+$\texttt{(..)}$ Identify a pair of characters.  
+$\texttt{.*}$ Follow with any characters.  
+$\texttt{\1}$ Follow with a backreference to the pair of characters identified earlier.
+
+```{r}
+str_subset(words, "(..).*\\1")
+```
+
+*Contain one letter repeated in at least three places (e.g., "eleven" contains three "e"s).*
+
+$\texttt{(.)}$ Identify any character.  
+$\texttt{.*}$ Follow with any characters.  
+$\texttt{\1}$ Follow with a backreference to the character matched to (.).  
+$\texttt{.*}$ Follow with any characters.  
+$\texttt{\1}$ Follow with a backreference to the character matched to (.).
+```{r}
+str_subset(words,"(.).*\\1.*\\1")
+```
+
+*Questions*  
+A programming language like Python is Turing complete because it can be used to express any computable function. Is there a sense in which regular expressions are "complete"? That is, can a regular expression be written to express any possible pattern in a string? Computers are built from primitive logic gates, like and, or, not. Is there some primitive set of operations for identifying patterns in strings?
