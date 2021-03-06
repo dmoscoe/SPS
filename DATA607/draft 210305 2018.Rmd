@@ -1,0 +1,109 @@
+---
+title: 'DATA 607: Tidying and Transforming Data'
+author: "Daniel Moscoe"
+date: "3/5/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+#### Introduction
+
+Data is *tidy* if: \n
+
+* Each variable occupies one column;\n
+* Each observation occupies one row;\n
+* Each cell contains exactly one value.
+
+Working with tidy data is advantageous, because tidy data is more amenable to transformation and analysis. Many widely-used statistical packages presume that input data will be more-or-less tidy. Combining and comparing distinct datasets is also simpler when they conform to the conditions listed above.
+
+This assignment begins with untidy data, shown below.
+
+```{r}
+untidy_flights <- read_csv('https://raw.githubusercontent.com/dmoscoe/SPS/main/DATA607/untidied.csv')
+head(untidy_flights)
+```
+
+In what follows, I transform the data into a tidy form. Then I analyze the performance of Alaska Airlines and AM WEST based on the data.
+
+#### Procedure Overview
+
+1. Add missing variable names.
+2. Use $\texttt{tidyr::gather()}$ to consolidate each variable into its own column.
+3. Use $\texttt{tidyr::spread()}$ to consolidate each observation into a single row.
+4. Add the column $\texttt{fract_delayed}$, which gives the fraction of flights delayed for each airline at each destination.
+5. Analyze on-time performance for each airline.
+
+#### Procedure Detail
+
+1. $\texttt{untidy_data}$ lacks column headings above the names of each airline, and above the status of each group of flights (*on time* or *delayed*). We can call these columns $\texttt{airline}$ and $\texttt{status}$, respectively. Let's also create a third column, $\texttt{flight_count}$, which will be useful when gathering the columns containing destination names.
+
+```{r}
+tidy_flights <- untidy_flights %>%
+  rename(airline = X1, status = X2) %>%
+  bind_cols(flight_count = NA)
+```
+
+2. $\texttt{untidy_data}$ shows five columns containing the names of destinations. Each of these destination names is more usefully expressed as a level of a new variable, $\texttt{dest}$. In the pipeline below, I'll also fill in values for missing airline names and drop rows that do not represent an observation of an airline's performance at a destination.
+
+```{r}
+tidy_flights <- tidy_flights %>%
+  gather(
+    `Los Angeles`:`Seattle`, 
+    key = dest, value = flight_count, 
+    na.rm = FALSE, convert = TRUE
+  ) %>%
+  fill(airline, .direction = "down") %>%
+  drop_na()
+head(tidy_flights)
+```
+
+3. In our original data, each airline's performance at a destination was described across two rows: one for the number of on-time flights, and another for the number of delayed flights. Since both these rows pertain to the same airline and the same destination, they are part of the same observation. We can use $\texttt{tidyr::spread()}$ to create two new variables, $\texttt{delayed}$ and $\texttt{on time}$, which contain counts of delayed and on-time flights for each airline at each destination.
+
+```{r}
+tidy_flights <- tidy_flights %>%
+  spread(key = status, value = flight_count)
+```
+
+4. Then we can add $\texttt{fract_delayed}$, which will aid in our analysis. The head of our finished tidy tibble, $\texttt{tidy_flights}$, appears below.
+
+```{r}
+tidy_flights <- tidy_flights %>%
+  mutate(fract_delayed = `delayed` / (`on time` + delayed))
+head(tidy_flights)
+```
+
+5. The data available suggest two questions for analysis:
+(a) Which airline has better overall on-time performance?
+(b) Which airline has better on-time performance at each destination?
+
+The plot below shows the fraction of flights delayed at each destination for each airline. Columns are labeled with the total number of the airline's flights to that destination contained in the dataset.
+
+```{r}
+ggplot(data = tidy_flights, mapping = aes(x = fct_reorder(dest, fract_delayed), y = fract_delayed, fill = airline)) + 
+  geom_col(position = "dodge") +
+  scale_x_discrete(guide = guide_axis(n.dodge = 2)) +
+  labs(title = "Delay Rate By Destination", 
+       subtitle = "Alaska Airlines and AM West", 
+       x = "Destination", 
+       y = "Fraction of Flights Delayed") +
+  geom_label(aes(label = `on time` + delayed), show.legend = FALSE, vjust = 1)
+```
+
+The plot shows that, at every destination, Alaska airlines has a lower fraction of flights delayed, and therefore better on-time performance. At its hub in Seattle, Alaska's fraction of flights delayed is about 0.09 less than AM West's. Even at AM West's hub, Phoenix, Alaska outperforms.
+
+What about overall performance?
+
+```{r}
+overall_performance <- tidy_flights %>%
+  group_by(airline) %>%
+  summarize(tot_delayed = sum(delayed), tot_ontime = sum(`on time`), overall_delay_rate = round((sum(delayed)/(sum(`on time`) + sum(delayed))),2))
+overall_performance
+```
+
+$\texttt{overall_performance}$ shows that, even though Alaska demonstrates better on-time performance at each destination, its overall delay rate is higher than that of AM West. This may seem like a paradox: how could an airline with better performance at any given destination be worse overall? The apparent paradox arises from the intuition that the overall delay rate must be an average of individual delay rates. Actually, the overall delay rate is a *weighted average* rather than a straight average. Each delay rate is weighted by the number of flights it summarizes. For AM West, this means there is a very large weight on their low delay-rate at Phoenix. For Alaska, the largest weight lies on their relatively high delay-rate at Seattle. These weights mean that AM West's overall delay rate is less than it would be as a straight average of its delay rates at each destination. Alaska's delay rate is greater.
+
+The surprising consequence is that the overall average delay rate is misleading when it comes to choosing flights with low likelihoods of delay. Even though Alaska's overall delay-rate is higher, it remains the best choice for any destination.
