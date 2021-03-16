@@ -1,0 +1,29 @@
+<?xml version = "1.0" encoding = "UTF-8"?>
+
+<Books>
+
+ <Book>
+  <Title>Mathematical Statistics With Applications</Title>
+  <Authors>Wackerly, Mendenhall, Scheaffer</Authors>
+  <Length>853</Length>
+  <ISBN>0534377416</ISBN>
+  <Color>No</Color>
+ </Book>
+
+ <Book>
+  <Title>OpenIntro Statistics</Title>
+  <Authors>Diez, Cetinkaya-Rundel, Barr</Authors>
+  <Length>422</Length>
+  <ISBN>9781943450077</ISBN>
+  <Color>No</Color>
+ </Book>
+
+ <Book>
+  <Title>Stats Data and Models</Title>
+  <Authors>De Veaux, Velleman, Bock</Authors>
+  <Length>939</Length>
+  <ISBN>9780321986498</ISBN>
+  <Color>Yes</Color>
+ </Book>
+
+</Books>
