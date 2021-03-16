@@ -1,0 +1,20 @@
+{"Books" :[ 
+	{"Title": "Mathematical Statistics With Applications",
+	 "Authors": ["Wackerly", "Mendenhall", "Scheaffer"],
+	 "Length": ["853"],
+	 "ISBN": ["0534377416"],
+	 "Color": ["No"]
+	},
+	{"Title": "OpenIntro Statistics",
+	 "Authors": ["Diez", "Cetinkaya-Rundel", "Barr"],
+	 "Length": ["422"],
+	 "ISBN": ["9781943450077"],
+	 "Color": ["No"]
+	},
+	{"Title": "Stats Data and Models",
+	 "Authors": ["De Veaux", "Velleman", "Bock"],
+	 "Length": ["939"],
+	 "ISBN": ["9780321986498"],
+	 "Color": ["Yes"]
+	}]
+}
