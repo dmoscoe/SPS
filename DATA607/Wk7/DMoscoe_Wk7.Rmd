@@ -1,0 +1,85 @@
+---
+title: 'DATA607: HTML, JSON, and XML'
+author: "Daniel Moscoe"
+date: "3/16/2021"
+output: html_document
+---
+
+#### Introduction
+
+Importing data from a variety of formats is an essential skill in R. In this assignment, I create a simple table on my favorite statistics textbooks, using a variety of formats (HTML, JSON, XML). Then I import these formats into R and store them as dataframes.
+
+I used the packages below.
+
+```{r warning = FALSE, message = FALSE}
+library(tidyverse)
+library(XML)
+library(xml2)
+library(jsonlite)
+library(rvest)
+```
+
+Identical data is stored in three different formats on GitHub.
+
+```{r}
+xml_src <- read_xml("https://raw.githubusercontent.com/dmoscoe/SPS/main/DATA607/Wk7/StatsBooks.xml")
+html_src <- read_html("https://raw.githubusercontent.com/dmoscoe/SPS/main/DATA607/Wk7/StatsBooks.html")
+json_src <- fromJSON("https://raw.githubusercontent.com/dmoscoe/SPS/main/DATA607/Wk7/StatsBooks.json")
+```
+
+Finally, I converted each data type to an R dataframe.
+
+```{r}
+json_df <- as.data.frame(json_src)
+
+html_df <- html_src %>%
+  html_table() %>%
+  as.data.frame()
+
+xml_df <- xml_src %>%
+  xmlParse() %>%
+  xmlToDataFrame()
+```
+
+Let's examing the dataframes.
+
+```{r}
+html_df
+```
+
+Before transforming any of the data, it's interesting to note that the ISBN entries are interpreted as numerics rather than strings. This caused R to drop a leading zero in one of the entries. Let's transform this column.
+
+```{r}
+html_df$ISBN <- as.character(html_df$ISBN)
+html_df[1,4] <- "0534377416"
+html_df
+```
+
+The dataframe derived from the JSON source appears below.
+
+```{r}
+json_df
+```
+
+Here we see that each column carries the prefix `Books.`. JSON files are hierarchical, and when R imports them, each column heading is interpreted as the child of a root node, in this case, `Books`. Let's change the column names so that they are consistent with those from the HTML table.
+
+```{r}
+json_df <- rename(json_df, "Title" = "Books.Title",
+       "Authors" = "Books.Authors",
+       "Length" = "Books.Length",
+       "ISBN" = "Books.ISBN",
+       "Color" = "Books.Color")
+json_df
+```
+
+The dataframe derived from the XML source appears below.
+
+```{r}
+xml_df
+```
+
+This dataframe requires no transformation to be consistent with the other two.
+
+#### Conclusion
+
+Understanding the format and structure of imported data is essential for working with it in R. There are commonalities across packages designed for the import of specific data types. Even so, each distinct data type requires some specific skills.
