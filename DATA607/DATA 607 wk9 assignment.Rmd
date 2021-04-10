@@ -1,0 +1,83 @@
+---
+title: "Using a Web API"
+author: "Daniel Moscoe"
+date: "4/6/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Introduction
+
+In this assignment, I demonstrate a pair of functions that, together, return a dataframe containing information from a specified *New York Times* bestseller list. The functions interact with an *NYT* API to collect data in JSON format. They return a dataframe containing the contents of the bestseller list.
+
+### Setup
+
+The `jsonlite` package provides functionality for interpreting JSON content downloaded from the API. `Tidyverse` is here for its usual housekeeping abilities. The `api_key` and `base_url` will be used to construct URLs that access the API.
+
+```{r, message = FALSE, warning = FALSE}
+library(jsonlite)
+library(tidyverse)
+library(knitr)
+api_key <- 'dfFgsQLgKyrYxcmXVRqyz4wkVxYjQkao'
+base_url <- 'https://api.nytimes.com/svc/books/v3/lists'
+```
+
+### Pulling from the API
+
+The *NYT* publishes bestseller lists for many categories and genres. Some of these lists are actively updated, and some are retired. The function `get_list_names()` returns a dataframe showing the names and publication dates of *NYT* bestseller lists. This output serves as a menu of what lists we might request from the API.
+
+```{r}
+get_list_names <- function() {
+  a <- str_c(base_url,'/','names','.json?api-key=',api_key) %>%
+    fromJSON() %>%
+    as.data.frame() %>%
+    select(results.list_name, 
+           results.oldest_published_date, 
+           results.newest_published_date) %>%
+    rename('list name' = results.list_name, 
+           'first-published' = results.oldest_published_date, 
+           'most-recent' = results.newest_published_date)
+  return(a)
+}
+```
+
+Once we've decided on a list name and a date (or "current"), we can query the API with `get_list()`. This function first reformats the list name for use in the URL. Then it returns a dataframe containing the contents of the specified list.
+
+```{r}
+get_list <- function(date, list_name) {
+  list_name <- list_name %>%
+    str_to_lower() %>%
+    str_replace_all(' ','-')
+  
+  result_url <- str_c(base_url,'/',date,'/',list_name,'/','.json?api-key=',api_key)
+  result_content_as_df <- fromJSON(result_url)$results$books %>%
+    select('rank':'contributor')
+  
+  return(result_content_as_df)
+}
+```
+
+### Vignette
+
+We're interested in viewing the contents of a *NYT* bestseller list in a nonfiction genre from the summer of 2020. Let's look at the lists and their publication dates to help us choose.
+
+```{r}
+menu <- get_list_names()
+kable(menu[1:10,])
+```
+
+We see the list "Paperback Nonfiction" has been active since 2008, so we request the 2020-08-01 edition from the API.
+
+```{r}
+pbnf <- get_list('2020-08-01', 'Paperback Nonfiction')
+kable(pbnf[,c(1,3,7,8,9,11,12)])
+```
+
+From this list, we can see that many of the books relate to social justice and race in the United States. There are no titles new to the list for our specified date. Two books have occupied positions on the list for much longer than the others: *Just Mercy* and *The New Jim Crow*.
+
+### Conclusion
+
+APIs offer a convenient way to interact with the data stored on a website. When they are available, they offer considerable advantages over web-scraping. However, because a publisher can alter the functionality of an API at any time, software that depends on APIs may need to be updated frequently.
