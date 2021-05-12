@@ -1,0 +1,618 @@
+---
+title: "Churn Analysis with Logistic Regression and Random Forest"
+author: "Daniel Moscoe"
+date: "5/11/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Introduction
+
+Churn analysis is a fundamental problem in data science. The investigator obtains information on customer behavior and attributes and uses this information to predict whether the customer will terminate a contract, or not. In this study, I conduct a churn analysis based on simulated cell phone customer data from a Kaggle competition, [*Customer Churn Prediction 2020*](https://www.kaggle.com/c/customer-churn-prediction-2020). I combine this data with information on Google searches pertaining to each of the four major cell phone carriers in the US. The study addresses four main questions:
+
+* Does the mean `total_day_charge` for customers vary by `area_code`?
+* Does the mean value of `number_customer_service_calls` vary depending on whether a customer carries an `international_plan`?
+* Is `number_customer_service_calls` related to the customer's `total_day_charge`?
+* Are a customer's characteristics predictive of whether they will terminate their contract?
+
+The study follows the OSEMN workflow. ("OSEMN" stands for Obtain, Scrub, Explore, Model, iNterpret, and it is an osemn/awesome way to structure a data science project.) The main strategy for data exploration, in addition to visualization, is hypothesis testing. In the modeling section, I build a logistic regression as well as a random forest model to predict customer churn. I conclude with a summary of my findings.
+
+### Obtain
+
+This analysis combines two data sources. The first is from the Kaggle competition, [*Customer Churn Prediction 2020*](https://www.kaggle.com/c/customer-churn-prediction-2020). The second data source contains information on Google searches pertaining to each of the four major cell phone carriers in the US.
+
+```{r message = FALSE, warning = FALSE}
+library(caret)
+library(InformationValue)
+library(GGally)
+library(gtrendsR)
+library(infer)
+library(psych)
+library(randomForest)
+library(ROCR)
+library(stats)
+library(tidyverse)
+set.seed(210509)
+
+k1.dat <- read_csv("https://raw.githubusercontent.com/dmoscoe/SPS/main/churn_train.csv")
+str(k1.dat)
+```
+
+`k1.dat` contains 20 variables with 4,250 rows. Columns 1 through 19 contain information pertaining to customer accounts, and column 20 indicates whether the customer terminated their account (churned).
+
+```{r message=FALSE, warning=FALSE, cache=FALSE}
+gtrends_search_terms <- c("att", "at&t", "tmobile", "t-mobile", "us cellular", "u.s. cellular", "verizon", "verizon wireless")
+
+states <- c('US-AL', 'US-AK', 'US-AZ', 'US-AR', 'US-CA', 'US-CO', 'US-CT', 'US-DE', 'US-DC', 'US-FL', 'US-GA', 'US-HI', 'US-ID', 'US-IL', 'US-IN', 'US-IA', 'US-KS', 'US-KY', 'US-LA', 'US-ME', 'US-MD', 'US-MA', 'US-MI', 'US-MN', 'US-MS', 'US-MO', 'US-MT', 'US-NE', 'US-NV', 'US-NH', 'US-NJ', 'US-NM', 'US-NY', 'US-NC', 'US-ND', 'US-OH', 'US-OK', 'US-OR', 'US-PA', 'US-RI', 'US-SC', 'US-SD', 'US-TN', 'US-TX', 'US-UT', 'US-VT', 'US-VA', 'US-WA', 'US-WV', 'US-WI', 'US-WY')
+
+g1.dat <- list()
+
+for (i in seq(1,51)){
+  g1.dat[i] <- gtrends(keyword = gtrends_search_terms[1:4], geo = states[i], time = "2020-03-01 2020-03-30")
+}
+
+for (i in seq(52,102)){
+  g1.dat[i] <- gtrends(keyword = gtrends_search_terms[5:8], geo = states[i-51], time = "2020-03-01 2020-03-30")
+}
+
+str(g1.dat[[1]])
+summary(g1.dat[[1]])
+```
+
+`g1.dat` is a list of data frames. Each of the 102 dataframes contained in `g1.dat` contains Google Trends information for 4 search terms, 1 state, and 30 days. Since there are 8 search terms, each state is represented by 2 data frames.
+
+### Scrub
+
+In this section, I summarize the Google Trends data for each state, and I combine all the data into a single data frame.
+
+Summary data for `k1.dat` shows that some columns are misclassified. For example, `read_csv` interprets `churn` as a character vector, but it's better represented as a Boolean. Below I reclassify some of the columns.
+
+```{r}
+k2.dat <- k1.dat %>%
+  mutate("international_plan" = ifelse(international_plan == "yes", TRUE, FALSE)) %>%
+  mutate("voice_mail_plan" = ifelse(voice_mail_plan == "yes", TRUE, FALSE)) %>%
+  mutate("churn" = ifelse(churn == "yes", TRUE, FALSE)) %>%
+  mutate("state" = as.factor(state)) %>%
+  mutate("area_code" = as.factor(area_code))
+  
+str(k2.dat)
+```
+
+The Google Trends data can be transformed into a measure of inequality across search activity within each state. This is motivated by the assumption that there will be greater equality in search activity across wireless providers in states having competitive wireless markets. By contrast, in states where a single wireless provider dominates, the majority of searches will seek the dominant provider. This will result in greater inequality across search terms within low-competition states.
+
+The inequality measure I use is the Gini index. A Gini index is typically used to measure economic inequality. When it's used to measure income inequality, "A Gini coefficient of zero expresses perfect equality, where all values are the same (for example, where everyone has the same income). A Gini coefficient of 1 (or 100%) expresses maximal inequality among values (e.g., for a large number of people where only one person has all the income or consumption and all others have none...)" (Wikipedia). In the context of this data, a Gini index of 1 means that all queries within a state sought a single wireless provider. An index of 0 means that search queries were equally split across the four providers.
+
+To construct the Gini index for each state, I add together all the queries within a state for a given provider across the entire month of March, 2020, the month immediately preceding the opening of the Kaggle contest. Finally, I construct the Gini coefficient for the state by comparing the March 2020 queries for different providers within the state.
+
+
+```{r}
+tmp_query_summaries <- data.frame("geo" = "x", "att" = -1, "tmobile" = -1, "uscell" = -1, "verizon" = -1)
+
+for (i in seq(1,51)) {
+  tmp_queries_in_state <- g1.dat[[i]] %>%
+    mutate("hits" = as.numeric(ifelse(hits == "<1", 0, hits))) %>%
+    group_by(keyword) %>%
+    summarise(sum(hits))
+  
+  tmp_query_summaries <- rbind(tmp_query_summaries, c("geo" = states[i], "att" = sum(tmp_queries_in_state[1,2], tmp_queries_in_state[2,2]), "tmobile" = sum(tmp_queries_in_state[3,2], tmp_queries_in_state[4,2]), "uscell" = NA, "verizon" = NA))
+}
+
+tmp_query_summaries <- tmp_query_summaries %>%
+  filter(att >= 0)
+
+for (i in seq(52,102)) {
+  tmp_queries_in_state <- g1.dat[[i]] %>%
+    mutate("hits" = as.numeric(ifelse(hits == "<1", 0, hits))) %>%
+    group_by(keyword) %>%
+    summarise(sum(hits))
+
+  tmp_query_summaries[i-51,4] <- sum(tmp_queries_in_state[1,2], tmp_queries_in_state[2,2])
+  tmp_query_summaries[i-51,5] <- sum(tmp_queries_in_state[3,2], tmp_queries_in_state[4,2])
+}
+```
+
+`tmp_query_summaries` is a relative measure of search activity for each carrier for each state for March 2020.
+
+```{r}
+head(tmp_query_summaries)
+```
+
+Next, a Gini index is computed for each state from this data, and the variable `gini` is added to `k2.dat`.
+
+```{r}
+ginis <- data.frame("geo" = "x", "gini" = "-1")
+for(i in seq(nrow(tmp_query_summaries))) {
+  tmp <- sort(as.integer(tmp_query_summaries[i,2:5]))
+  tmp.gini <- 1 - ((1/sum(tmp)) * (1.75 * tmp[1] + 1.25 * tmp[2] + 0.75 * tmp[3] + 0.25 * tmp[4]))
+  ginis <- rbind(ginis, c(tmp_query_summaries[i,1], round(tmp.gini, 4)))
+}
+ginis <- ginis %>%
+  filter(gini >= 0)
+
+ginis <- ginis %>%
+  mutate("tmp" = str_sub(geo, -2)) %>%
+  select(3,2) %>%
+  rename("state" = tmp)
+
+k3.dat <- left_join(k2.dat, ginis, by = "state") %>%
+  select(2,6:18,21,19,4,5,1,3,20) %>%
+  transform(gini = as.numeric(gini)) %>%
+  transform(state = as.factor(state))
+
+colnames(k3.dat)
+  
+```
+### Explore
+
+What are the shapes of the distributions of the numeric variables? Do any of the variables possess extreme outliers? Histograms are a useful way to begin to respond to these questions.
+
+```{r}
+k3.dat %>%
+  keep(is.numeric) %>%
+  gather() %>%
+  ggplot(aes(value)) +
+  facet_wrap(~ key, scales = "free") +
+  geom_histogram()
+```
+
+All the variables pertaining to customer call activity are normally distributed with no apparent outliers, and no missing values. One exception is `total_intl_calls`, which is skewed right and displays some gaps in the distribution. `number_customer_service_calls` also exhibits right skew, but there are no extreme outliers. `number_vmail_messages` is the "worst-behaved" of the variables here. It appears to exhibit several extreme outliers, while most of its values lie near zero.
+
+```{r}
+hist(k3.dat$number_vmail_messages, main = "Customer Use of Voicemail", xlab = "Number of voicemail messages", ylab = "Number of customers")
+```
+
+Closer inspection reveals a roughly normal distribution centered near 30, and a large number of observations between 0 and 5. Are those also distributed normally?
+
+```{r}
+small_vmails <- k3.dat %>%
+  filter(number_vmail_messages <= 5)
+
+hist(small_vmails$number_vmail_messages, main = "Customer Use of Voicemail, msgs <= 5", xlab = "Number of voicemail messages", ylab = "Number of customers")
+```
+
+The large majority of customers do not use voice mail at all.
+
+Examining categorical variables:
+```{r}
+k3.dat %>%
+  select(area_code) %>%
+  table()
+```
+
+```{r}
+
+explore_state <- k3.dat %>%
+  group_by(state) %>%
+  summarise("fraction of customers" = round(n()/nrow(k3.dat),4)) %>%
+  arrange(`fraction of customers`)
+
+explore_state[c(1:5,47:51),]
+```
+
+Every state is represented in the data, and no state's customers outnumber any other states by more than a factor of about 3. It's interesting to note that the most populous state, California, shows the smallest number of customers. The state with the largest number of customers is West Virginia.
+
+Examining the response variable, `churn`:
+```{r}
+k3.dat %>%
+  select(churn) %>%
+  table()
+```
+
+There are no missing values, but the class is significantly imbalanced in favor of non-churning customers. I conclude this section of the exploratory analysis by considering some numeric variables, together with `churn`, in relation to each other. Perhaps there are interesting patterns that will be useful later on.
+
+```{r message = FALSE, warning = FALSE}
+ggpairs(k3.dat[,c(1:4,15,16,21)])
+```
+
+There may be a relationship between `number_customer_service_calls` and `churn`, as well as between `number vmail_messages` and churn. Otherwise, there do not appear to be any meaningful relationships among any of these variable pairs.
+
+I continue exploring the data set by running some hypothesis tests. In an effort to better understand the customer behavior described by the data, I ask: 
+* Does the mean `total_day_charge` vary by `area_code`? 
+* Does the mean value of `number_customer_service_calls` vary depending on whether a customer carries an `international_plan`? 
+* Is the number of calls to customer service related to the customer's `total_day_charge`?
+
+#### Does the mean `total_day_charge` vary by `area_code`? 
+
+Are there any obvious differences apparent in the data?
+
+```{r}
+k3.dat %>%
+  ggplot(aes(x = total_day_charge, y = area_code)) +
+  geom_boxplot() +
+  labs(title = "Total Daytime Charges by Area Code", x = "Total Daytime Charge ($)", y = "Area Code")
+```
+
+Based on this visualization, there does not appear to be a statistically significant difference in the distribution of `total_day_charge` across `area_code`s. Next, I check conditions for inference to prepare for the formal hypothesis test.
+
+1. Are observations independent within and across groups?
+Yes. No customer's `total_day_charge` has a direct impact on any other customer's `total_day_charge`. And no group's charges has a meaningful direct impact on any other group's.
+
+2. Are the data within each group nearly normal?
+
+```{r message = FALSE, warning = FALSE}
+ggplot(data = k3.dat, aes(x = total_day_charge)) +
+  geom_histogram() +
+  facet_wrap(~area_code) +
+  labs(title = "Total Day Charge by Area Code", x = "Total Day Charge ($)", y = "count")
+```
+
+Yes.
+
+3. Is the variability within each group approximately equal?
+Based on the boxplots and histograms, it does appear that the variability within each group is very similar.
+
+The null hypothesis, $H_{0}$, is that the mean values of `total_day_charge` for all levels of `area_code` are equal. The alternative hypothesis, $H_{A}$, is that at least two mean values of `total_day_charge` for different levels of `area_code` are unequal. For this hypothesis test, $\alpha = 0.05$.
+
+```{r}
+#Compute the point estimate
+F_hat <- k3.dat %>%
+  specify(total_day_charge ~ area_code) %>%
+  calculate(stat = "F")
+
+#Generate the null distribution (the sampling distribution of the test statistic if the null hypothesis is true)
+null_f_distn <- k3.dat %>%
+  specify(total_day_charge ~ area_code) %>%
+  hypothesize(null = "independence") %>%
+  generate(reps = 1000, type = "permute") %>%
+  calculate(stat = "F")
+
+#Get the p-value for your test statistic with respect to the null distribution
+null_f_distn %>%
+  get_p_value(obs_stat = F_hat, direction = "greater")
+
+#Visualize the result
+visualize(null_f_distn, method = "simulation") + 
+  shade_p_value(obs_stat = F_hat, direction = "greater")
+```
+
+For this hypothesis test, $p > \alpha$, so the null hypothesis is not rejected. There is not sufficient evidence to support the claim that mean day charges vary across area code.
+
+The partially shaded histogram above, "Simulation-Based Null Distribution," shows the point estimate for the F-statistic compared to the null distribution. If the null hypothesis were true, then about 19.6% of F-statistics calculated from samples like this one would lie at or to the right of the point estimate calculated above.
+
+#### Does the mean value of `number_customer_service_calls` vary depending on whether a customer carries an `international_plan`?
+
+```{r}
+ggplot(data = k3.dat, aes(x = number_customer_service_calls)) +
+  geom_histogram() +
+  facet_wrap(~international_plan) +
+  labs(title = "Customer Service Calls For Customers With/out Intl Plans", x = "Number of Customer Service Calls", y = "Count")
+```
+
+Notice that the groups are very unequal:
+
+```{r}
+k3.dat %>%
+  group_by(international_plan) %>%
+  summarise(n())
+```
+
+Based on the above histogram, there does not appear to be a statistically significant difference in the distribution of `number_customer_service_calls` across the two levels of `international_plan`. Next, I check conditions for inference to prepare for the formal hypothesis test.
+
+1. Are the data independent within and across groups?
+The data are independent within groups, because no customer's calls to customer service have an effect on any other customer's calls to customer service. The groups are independent of each other because no one's decision to carry an international plan impacts anyone else's.
+
+2. Is the data within each group distributed normally?
+Both data sets are similarly skewed right, but neither exhibits any extreme outliers, and both contain many more than 30 observations. So the normality condition is sufficiently satisfied.
+
+The null hypothesis, $H_{0}$, is that the mean values of `number_customer_service_calls` for both levels of `international_plan` are equal. The alternative hypothesis, $H_{A}$, is that they are unequal. For this hypothesis test, $\alpha = 0.05$.
+
+```{r}
+
+obs_diff <- k3.dat %>%
+  specify(number_customer_service_calls ~ international_plan) %>%
+  calculate(stat = "diff in means", order = c(TRUE, FALSE))
+
+null_t_distn <- k3.dat %>%
+  specify(number_customer_service_calls ~ international_plan) %>%
+  hypothesize(null = "independence") %>%
+  generate(reps = 1000, type = "permute") %>%
+  calculate(stat = "diff in means", order = c(TRUE, FALSE))
+
+null_t_distn %>%
+  get_p_value(obs_stat = obs_diff, direction = "left")
+
+visualize(null_t_distn, method = "simulation") +
+  shade_p_value(obs_stat = obs_diff, direction = "two_sided")
+```
+
+For this hypothesis test, $p = 0.306$. Since $p > \alpha$, the null hypothesis is not rejected. There is not sufficient evidence to support the claim that the number of calls a customer makes to customer service varies depending on whether they carry an international plan.
+
+The partially shaded histogram above, "Simulation-Based Null Distribution," shows the point estimate for the t-statistic compared to the null distribution. If the null hypothesis were true, then about 61% of t-statistics calculated from samples like this one would lie toward the tails of the point estimate calculated above.
+
+#### Is `number_customer_service_calls` related to the customer's `total_day_charge`?
+
+This question can be addressed by attempting to fit a linear regression model to the `number_customer_service_calls` and `total_day_charge` data.
+
+The most important condition for linear regression is that the data display a linear relationship. Do they?
+```{r}
+ggplot(data = k3.dat, mapping = aes(x = total_day_charge, y = number_customer_service_calls)) +
+  geom_point() +
+  labs(title = "Do Customer Svc Calls Vary Linearly with Day Charges?", x = "Total Day Charges ($)", y = "Number of Customer Service Calls")
+```
+
+This scatterplot also does not show a linear pattern, so these two variables do not satisfy the conditions for regression.
+
+### Model: Logistic Regression
+
+Logistic regression is a special type of linear model used when the response variable takes on two or more discrete factors. Here, I use logistic regression to try to predict a customer's `churn` value based on their other characteristics. The first step is to assess whether the data satisfy conditions for the model. Then a "default" model is constructed and then refined to improve its simplicity and avoid overfitting. Finally, I assess the model's performance against the test data, and interpret the results.
+
+#### Conditions for logistic regression
+
+Logistic regression may be appropriate if each customer's churn status is independent of each other's, and if each predictor variable is linearly related to $\text{logit}(p_{i})$, when other predictors are held constant. Based on our knowledge of customer behavior, no customer's churn decision has a direct impact on the decision of any other customer, so the first condition is satisfied. After arriving at the final model, a residuals plot can help inform whether the second condition of linearity is met.
+
+While class balance is not considered a condition for fitting a logistic regression, data sets with imbalanced classes can sometimes lead to a model that is weaker in predicting the minority class. The data set as it stands exhibits a strong imbalance in favor of `churn == FALSE`. 
+
+```{r}
+k3.dat %>%
+  select(churn) %>%
+  table()
+```
+
+Below, I generate a balanced training set and a test set. To balance the training data, observations from the majority class are omitted until both classes are equal. While this entails ignoring some potentially informative observations, it will hopefully lead to a model that is better able to predict members of both classes.
+
+Split the data 80/20 into train/test sets:
+```{r}
+training_rows <- sample(nrow(k3.dat), nrow(k3.dat) * 0.80, replace = FALSE)
+k3_train.dat <- k3.dat[training_rows,]
+k3_test.dat <- k3.dat[-training_rows,]
+
+tf_table <- k3_train.dat %>%
+  select(churn) %>%
+  table()
+```
+
+Downsampling the training set involves removing rows for which `churn == FALSE` until both classes contain the same number of observations, in this case, 470. First, we'll sample 470 entries where `churn == FALSE` from the training data. Then we'll combine these with all the entries from the positive class.
+
+```{r}
+k3_train_negs.dat <- k3_train.dat %>%
+  filter(churn == FALSE)
+
+keepers <- sample(nrow(k3_train_negs.dat), tf_table[2], replace = FALSE)
+k3_train_negs.dat <- k3_train_negs.dat[keepers,]
+
+k3_train_negs.dat %>%
+  select(churn) %>%
+  table()
+```
+
+```{r}
+k4_train.dat <- k3_train.dat %>%
+  filter(churn == TRUE) %>%
+  rbind(k3_train_negs.dat)
+
+k4_train.dat %>%
+  select(churn) %>%
+  table()
+```
+
+Now that the training set is balanced, it's ready for logistic regression.
+```{r}
+k4_train.glm <- glm(data = k4_train.dat, family = binomial(link = "logit"), formula = churn ~ .)
+summary(k4_train.glm)
+```
+
+The model shows that most variables in the data set are not statistically significant predictors of `churn`, although some are. Exactly which ones will remain in the final model will be determined by a process of backward induction. Deviance residuals are roughly symmetric, which suggests that the model may be a good fit to the data. 
+
+#### Refining the model
+
+The process of refining the default model involves iteratively removing non-significant predictor variables, and attending to other properties of the model along the way. In particular, reductions in the AIC (Akaike information criterion) are a sign that the model is improving.
+
+The model summary indicates that no state is a statistically significant predictor of `churn`, so the variable pruning process begins by removing `state`. Total charges for different types of calls are also dropped, since these variables are just scalar multiples of their corresponding `minutes` variables.
+
+```{r message = FALSE, warning = FALSE, results = FALSE}
+#drop state and total charges
+k4_train.glm <- glm(data = k4_train.dat, family = binomial(link = "logit"), formula = churn ~ account_length + number_vmail_messages + total_day_minutes + total_day_calls + total_eve_minutes + total_eve_calls + total_night_minutes + total_night_calls + total_intl_minutes + total_intl_calls + gini + number_customer_service_calls + international_plan + voice_mail_plan + area_code)
+summary(k4_train.glm)
+```
+
+The AIC is significantly reduced, and the model is considerably simpler. Continue removing variables with p values greater than 0.05.
+
+```{r message = FALSE, warning = FALSE, results = FALSE}
+#drop total_night_calls
+k4_train.glm <- glm(data = k4_train.dat, family = binomial(link = "logit"), formula = churn ~ account_length + number_vmail_messages + total_day_minutes + total_day_calls + total_eve_minutes + total_eve_calls + total_night_minutes + total_intl_minutes + total_intl_calls + gini + number_customer_service_calls + international_plan + voice_mail_plan + area_code)
+summary(k4_train.glm)
+```
+
+```{r message = FALSE, warning = FALSE, results = FALSE}
+#drop area_code
+k4_train.glm <- glm(data = k4_train.dat, family = binomial(link = "logit"), formula = churn ~ account_length + number_vmail_messages + total_day_minutes + total_day_calls + total_eve_minutes + total_eve_calls + total_night_minutes + total_intl_minutes + total_intl_calls + gini + number_customer_service_calls + international_plan + voice_mail_plan)
+summary(k4_train.glm)
+```
+
+```{r message = FALSE, warning = FALSE, results = FALSE}
+#drop total_day_calls
+k4_train.glm <- glm(data = k4_train.dat, family = binomial(link = "logit"), formula = churn ~ account_length + number_vmail_messages + total_day_minutes + total_eve_minutes + total_eve_calls + total_night_minutes + total_intl_minutes + total_intl_calls + gini + number_customer_service_calls + international_plan + voice_mail_plan)
+summary(k4_train.glm)
+```
+
+```{r message = FALSE, warning = FALSE, results = FALSE}
+#drop gini
+k4_train.glm <- glm(data = k4_train.dat, family = binomial(link = "logit"), formula = churn ~ account_length + number_vmail_messages + total_day_minutes + total_eve_minutes + total_eve_calls + total_night_minutes + total_intl_minutes + total_intl_calls + number_customer_service_calls + international_plan + voice_mail_plan)
+summary(k4_train.glm)
+```
+
+```{r message = FALSE, warning = FALSE, results = FALSE}
+#drop total_eve_calls
+k4_train.glm <- glm(data = k4_train.dat, family = binomial(link = "logit"), formula = churn ~ account_length + number_vmail_messages + total_day_minutes + total_eve_minutes + total_night_minutes + total_intl_minutes + total_intl_calls + number_customer_service_calls + international_plan + voice_mail_plan)
+summary(k4_train.glm)
+```
+
+```{r message = FALSE, warning = FALSE, results = FALSE}
+#drop account_length
+k4_train.glm <- glm(data = k4_train.dat, family = binomial(link = "logit"), formula = churn ~ number_vmail_messages + total_day_minutes + total_eve_minutes + total_night_minutes + total_intl_minutes + total_intl_calls + number_customer_service_calls + international_plan + voice_mail_plan)
+summary(k4_train.glm)
+```
+
+```{r message = FALSE, warning = FALSE, results = FALSE}
+#drop total_intl_minutes
+k4_train.glm <- glm(data = k4_train.dat, family = binomial(link = "logit"), formula = churn ~ number_vmail_messages + total_day_minutes + total_eve_minutes + total_night_minutes + total_intl_calls + number_customer_service_calls + international_plan + voice_mail_plan)
+summary(k4_train.glm)
+```
+
+```{r message = FALSE, warning = FALSE, results = FALSE}
+#drop total_intl_calls
+k4_train.glm <- glm(data = k4_train.dat, family = binomial(link = "logit"), formula = churn ~ number_vmail_messages + total_day_minutes + total_eve_minutes + total_night_minutes + number_customer_service_calls + international_plan + voice_mail_plan)
+summary(k4_train.glm)
+```
+
+```{r message = FALSE, warning = FALSE}
+#drop number_vmail_messages
+k4_train.glm <- glm(data = k4_train.dat, family = binomial(link = "logit"), formula = churn ~ total_day_minutes + total_eve_minutes + total_night_minutes + number_customer_service_calls + international_plan + voice_mail_plan)
+summary(k4_train.glm)
+```
+The above model is parsimonious, with a small number of statistically significant predictor variables. Deviance residuals remain roughly symmetric, and AIC is lower than for the default model.
+
+The last step in completing the model is to determine the optimal cutoff value for $\text{logit}(p_{i})$. If the predicted value for an observation falls below the cutoff point, then the predicted class for the observation will be `churn == FALSE`. The model predicts `churn == TRUE` for observations with values of $\text{logit}(p_{i})$ greater than the cutoff value.
+
+In computing an optimal cutoff, one might choose any of a few different objectives. One objective might be to minimize false negative predictions. Customers assigned a false negative prediction are those who did churn, but who were not predicted to do so. Losing these customers is very expensive. The optimal cutoff that minimizes false negatives is the one that maximizes detection of customers likely to churn. The trade-off is that a low cutoff also increases false positives.
+
+Optimal cutoff for churn detection:
+```{r}
+k4_train_preds <- predict(k4_train.glm, k3_test.dat, type = "response")
+optimal_cutoff <- optimalCutoff(actuals = k3_test.dat$churn, predictedScores = k4_train_preds, optimiseFor = "Ones")
+optimal_cutoff
+```
+
+Confusion matrix:
+```{r}
+k4_train_preds <- ifelse(k4_train_preds >= optimal_cutoff, TRUE, FALSE)
+k4_train_preds_table <- table(k3_test.dat$churn, k4_train_preds)
+k4_train_preds_table
+```
+
+With this optimal cut-off criterion, the model correctly detects all 128 customers likely to churn. However, it incurs 627 false positives. Overall accuracy here is 26.2%-- much less than what one would obtain by naively assigning the majority class as the prediction for every observation in the test data. However, even with the low accuracy model, we were able to correctly identify 95 true negatives. If a company is considering sending a promotion to all customers to reduce churn, even this identification of 95 true negatives would reduce promotional offers by about 11.2%.
+
+Another optimal cut-off strategy might be to minimize total false predictions.
+```{r}
+k4_train_preds <- predict(k4_train.glm, k3_test.dat, type = "response")
+optimal_cutoff <- optimalCutoff(actuals = k3_test.dat$churn, predictedScores = k4_train_preds, optimiseFor = "misclasserror")
+optimal_cutoff
+```
+
+Confusion matrix:
+```{r}
+k4_train_preds <- ifelse(k4_train_preds >= optimal_cutoff, TRUE, FALSE)
+k4_train_preds_table <- table(k3_test.dat$churn, k4_train_preds)
+k4_train_preds_table
+```
+
+With this criterion, accuracy rises to 86.2%. However, the model detects only 14 customers truly likely to churn, and overlooks 114 of them. Depending on the actual costs of offering promotions and losing customers, this cutoff that maximizes overall accuracy may not be the one that minimizes overall cost of churn.
+
+The ROC curve shows the tradeoff between true positive rate and false positive rate across all cutoff values.
+```{r}
+k4_train_preds <- predict(k4_train.glm, k3_test.dat, type = "response")
+pred <- ROCR::prediction(k4_train_preds, k3_test.dat$churn)
+perf <- ROCR::performance(pred, "tpr", "fpr")
+plot(perf, colorize = TRUE, main = "ROC curve for logistic regression on churn data")
+```
+
+#### Residual Analysis
+
+If the logistic regression model is a good fit to the data, what can we expect of the residuals? In a traditional linear regression, an important part of validating the model is verifying that the residuals are randomly and evenly distributed about a mean of zero. In a logistic regression, we cannot expect this. That's because all the actual values of the response variable are either 0 or 1, and the logistic regression predicts not the *value* of the response variable, but the log odds that the response variable will be 1.
+
+A graph of the residuals for this logistic regression is:
+
+```{r}
+predprob <- predict(k4_train.glm, type = "response")
+resid_analysis <- data.frame("churn" = k4_train.dat$churn, "predprob" = predprob, "rawres" = k4_train.dat$churn - predprob)
+ggplot(resid_analysis, aes(x = predprob, y = rawres)) +
+  geom_point() +
+  labs(title = "Raw Residuals", x = "Predicted Probability", y = "Raw Residuals")
+```
+
+Regardless of the fit of the model, the shape of a residual plot for a logistic regression will appear the same: the top line representing residuals for observations of the positive class, and the bottom line representing residuals for observations of the negative class.
+
+A better visualization of the residuals compares binned residuals to the linear predictor instead of the predicted probability. The linear predictor is the exponent in the logit function, and it's the linear equation whose coefficients the model estimates.
+
+A typical procedure for assessing residuals of a logistic regression is the binned residuals plot. (What follows relies on Faraway, pp. 34ff.) If the model is a good fit, we should see what we expect from a traditional linear regression: a cloud of points with mean zero.
+
+```{r}
+k5_train.dat <- k4_train.dat %>%
+mutate("residuals" = residuals(k4_train.glm), linpred = predict(k4_train.glm))
+gdf <- group_by(k5_train.dat, cut(linpred, breaks = unique(quantile(linpred, (1:100)/101))))
+diagdf <- summarise(gdf, residuals = mean(residuals), linpred = mean(linpred))
+plot(residuals ~ linpred, diagdf, xlab = "linear predictor")
+```
+
+The binned residuals plot suggests the logistic regression is an appropriate model for this data.
+
+### Model: Random Forest
+
+Another option for modeling our data is to fit a random forest. A random forest model is a means of testing many different partitions of the data with respect to each of the explanatory variables. As the data are recursively partitioned in the building of a single tree, the cut-point for any particular variable is the one that minimizes the residual sum of squares. The random forest builds many such tree models. It then accepts the majority prediction for a given data point among all the tree models constituting the forest.
+
+The default random forest model for the training set is shown below.
+```{r}
+k4_train.for <- randomForest(as.factor(churn) ~ ., k4_train.dat)
+print(k4_train.for)
+```
+
+Without any model tuning, the accuracy of the model applied to the training data is about equal to the accuracy of the tuned logistic regression: 84.6%. However, since this measure is based only on the training data and not the test data, it's not clear what it implies for the model's effectiveness with unseen data.
+
+Assessing the model using the test data:
+```{r message = FALSE, warning = FALSE}
+k4_test_preds_for <- predict(k4_train.for, k3_test.dat) #predictions on the k3_test.dat data based on the model trained on k4_train.dat.
+confusionMatrix(k4_test_preds_for, as.numeric(k3_test.dat$churn)) #A confusion matrix comparing predicted values for k3_test.dat with actual values.
+```
+The model performs well against the test data, with an accuracy of almost 85%. This suggests that the default random forest was successful in avoiding overfitting, even though it considered all variables in the original data set.
+
+#### Tuning the Model
+
+The model can be refined by searching for an optimal value for `mtry` such that the out-of-bag error rate is minimized. The parameter `mtry` gives the "number of variables randomly sampled as candidates at each split."
+
+```{r}
+t <- tuneRF(k4_train.dat[,-21], as.factor(k4_train.dat[,21]), stepFactor = 0.3, plot = TRUE, trace = TRUE, improve = 0.01)
+```
+
+Based on the plot above, let's try an `mtry` parameter of 14 and rerun the forest.
+
+```{r}
+k4_train.for <- randomForest(as.factor(churn) ~ ., k4_train.dat, ntree = 200, mtry = 14, importance = TRUE, proximity = TRUE)
+print(k4_train.for)
+```
+
+Applying the new model to the test set:
+```{r}
+k4_test_preds_for <- predict(k4_train.for, k3_test.dat) #predictions on the k3_test.dat data based on the model trained on k4_train.dat.
+confusionMatrix(k4_test_preds_for, as.numeric(k3_test.dat$churn)) #A confusion matrix comparing predicted values for k3_test.dat with actual values.
+```
+
+Tuning the model by using an optimal value for `mtry` did not significantly affect accuracy. However, the confusion matrix above is different in important ways from the confusion matrix from the logistic regression. True positives increased significantly, while true negatives decreased significantly Overall, the random forest model is better at identifying customers likely to churn. The cost is that false positives go up as well. Depending on the expected loss of a churning customer, and the cost of retaining that customer, this may be an acceptable tradeoff. Overall, the difference in confusion matrices across models with similar accuracy shows that one needs to consider model properties and business considerations beyond mere accuracy in order to select the best model.
+
+Which variables were most important in the random forest model?
+```{r}
+varImpPlot(k4_train.for, main = "Variable Importance", n.var = 5, sort = TRUE)
+```
+
+Note that most of these variables were also statistically significant predictors in the logistic regression model. However, the first variable we eliminated from that model, `state`, shows up here as having great importance to the random forest model. Why? Is it because some states have a higher proportion of churning customers than others?
+
+```{r}
+explore_state <- k4_train.dat %>%
+  group_by(state) %>%
+  summarise(n(), sum(churn), fract_churn = sum(churn)/n())
+hist(explore_state$fract_churn, main = "Fraction of customers churning across states", xlab = "Fraction of customers churning", ylab = "Number of states")
+```
+
+This histogram does not lend any insight. The distribution of churn across states is approximately normal, with no outliers.
+
+### Conclusion
+
+By conducting hypothesis tests and modeling the churn data using logistic regression and random forests, it's possible to make some valuable predictions of future customer behavior. While neither the logistic regression nor the random forest produced accuracy scores much higher than the overall prevalance of the majority class, each model yielded valuable insights. The logistic regression model can be used to capture some true negatives, preventing a company from spending money on promotions offered to customers unlikely to churn. The random forest model did better at predicting customers likely to churn. Along with this strong ability to predict true positives comes a high false positive rate. If lost customers are very expensive and promotions are inexpensive, then this might be an acceptable tradeoff.
+
+The model yielded other insights as well. For example, a customer's likelihood to churn is associated with whether they carry an international plan, and the number of times they call customer service. Even if the company is not interested in preventing churn, this churn analysis points out that resolving issues during calls to customer service, as well as competing on their international plan, may be important next steps for this business.
+
+### References
+
+Diez, David, Mine Cetinkaya-Rundel, and Christopher Barr. *OpenIntro Statistics*, 4 ed. 2019. openintro.org/os.
+
+Faraway, Julian J. *Extending the Linear Model with R*, 2 ed. Boca Raton, FL: CRC Press, 2016.
+
+Kaggle. *Customer Churn Prediction 2020*. https://www.kaggle.com/c/customer-churn-prediction-2020. Accessed 5/9/2021.
+
+Nwanganga, Fred Chukwuka, and Mike Chapple. Practical Machine Learning in R . 1st edition. Indianapolis: John Wiley and Sons, 2020. Print.
+
+Rai, Bharatendra. "Random Forest in R - Classification and Prediction Example with Definition & Steps." https://www.youtube.com/watch?v=dJclNIN-TPo&t=1255s. Accessed 5/9/2021.
+
+Wikipedia. "Gini coefficient." https://en.wikipedia.org/wiki/Gini_coefficient. Accessed 5/9/2021.
